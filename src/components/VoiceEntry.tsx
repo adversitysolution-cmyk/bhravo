@@ -7,7 +7,8 @@ import { billMessage, payLink, spokenSummary, waLink } from "@/lib/share";
 import { SPEECH_LANG, speak } from "@/lib/speech";
 import { supabase } from "@/lib/supabase";
 
-type Item = { name: string; qty: number; unit: string; price: number | null };
+// amount is what the line costs in total, the way people say it aloud.
+type Item = { name: string; qty: number; unit: string; amount: number | null };
 type Kind = "bill" | "receipt" | "quote" | "note" | "trip";
 
 const DEFAULT_KIND: Record<string, Kind> = {
@@ -71,10 +72,13 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
     customer: string | null;
     phone: string | null;
     kind: Kind;
-    items: { name: string; qty: number; unit: string; price: number }[];
+    items: { name: string; qty: number; unit: string; price: number; amount: number }[];
     total: number;
     paid: boolean;
   } | null>(null);
+
+  const boxRef = useRef<HTMLTextAreaElement | null>(null);
+  const [flowHint, setFlowHint] = useState(false);
 
   const recRef = useRef<Recognition | null>(null);
   const canListen = getRecognition() !== null;
@@ -109,7 +113,13 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
     const ok = speak(
       spokenSummary({
         customer,
-        items: list.map((i) => ({ ...i, price: i.price ?? 0 })),
+        items: list.map((i) => ({
+          name: i.name,
+          qty: i.qty,
+          unit: i.unit,
+          price: null,
+          amount: i.amount,
+        })),
         total: sum,
         paid: isPaid,
       }),
@@ -226,7 +236,8 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
           name: i.name,
           qty: i.qty,
           unit: i.unit ?? "",
-          price: i.price,
+          amount:
+            i.price === null ? null : Math.round(i.price * i.qty * 100) / 100,
         })),
       );
       setStage("review");
@@ -236,22 +247,22 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
     }
   }
 
-  const itemsSum = items.reduce((sum, i) => sum + i.qty * (i.price ?? 0), 0);
+  const itemsSum = items.reduce((sum, i) => sum + (i.amount ?? 0), 0);
   const hasOverride = manualTotal !== null || statedTotal !== null;
   const total =
     manualTotal !== null ? Number(manualTotal) || 0 : (statedTotal ?? itemsSum);
-  const missingPrice = items.some((i) => i.price === null) && !hasOverride;
+  const missingPrice = items.some((i) => i.amount === null) && !hasOverride;
   // The speaker said a total that disagrees with the items they priced.
   const totalMismatch =
     statedTotal !== null &&
     manualTotal === null &&
     items.length > 0 &&
-    items.every((i) => i.price !== null) &&
+    items.every((i) => i.amount !== null) &&
     Math.abs(itemsSum - statedTotal) > 0.5;
 
   const update = useCallback((idx: number, patch: Partial<Item>) => {
-    // Editing a rate or quantity means the total should follow the items again.
-    if ("price" in patch || "qty" in patch) {
+    // Editing an amount means the total should follow the items again.
+    if ("amount" in patch) {
       setStatedTotal(null);
       setManualTotal(null);
     }
@@ -265,6 +276,18 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
       return;
     }
     setStage("saving");
+
+    // Store both the line amount and the per-unit rate derived from it.
+    const priced = items.map((i) => {
+      const amount = i.amount ?? 0;
+      return {
+        name: i.name,
+        qty: i.qty,
+        unit: i.unit,
+        amount,
+        price: i.qty > 0 ? Math.round((amount / i.qty) * 10000) / 10000 : 0,
+      };
+    });
 
     let customerId: string | null = null;
     let customerPhone: string | null = null;
@@ -292,7 +315,7 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
     const { error } = await supabase.from("entries").insert({
       customer_id: customerId,
       kind,
-      items: items.map((i) => ({ ...i, price: i.price ?? 0 })),
+      items: priced,
       total,
       paid,
       raw_transcript: text,
@@ -307,7 +330,7 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
       customer: name || null,
       phone: customerPhone,
       kind,
-      items: items.map((i) => ({ ...i, price: i.price ?? 0 })),
+      items: priced,
       total,
       paid,
     });
@@ -347,6 +370,13 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
         </label>
 
         <div className="mt-5 flex flex-col gap-3">
+          <div className="grid grid-cols-[1fr_4.5rem_4.5rem_5rem_auto] gap-2 text-xs font-medium text-muted">
+            <span>Item</span>
+            <span>Qty</span>
+            <span>Unit</span>
+            <span>Amount ₹</span>
+            <span className="w-6" />
+          </div>
           {items.map((it, idx) => (
             <div key={idx} className="grid grid-cols-[1fr_4.5rem_4.5rem_5rem_auto] items-center gap-2">
               <input
@@ -375,13 +405,13 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
                 type="number"
                 min="0"
                 step="any"
-                value={it.price ?? ""}
+                value={it.amount ?? ""}
                 onChange={(e) =>
-                  update(idx, { price: e.target.value === "" ? null : Number(e.target.value) })
+                  update(idx, { amount: e.target.value === "" ? null : Number(e.target.value) })
                 }
-                placeholder="₹ rate"
-                aria-label="Rate in rupees"
-                className={`${inputClass} ${it.price === null ? "border-saffron" : ""}`}
+                placeholder="₹ amount"
+                aria-label="Amount for this item in rupees"
+                className={`${inputClass} ${it.amount === null ? "border-saffron" : ""}`}
               />
               <button
                 type="button"
@@ -395,7 +425,7 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
           ))}
           <button
             type="button"
-            onClick={() => setItems((prev) => [...prev, { name: "", qty: 1, unit: "", price: null }])}
+            onClick={() => setItems((prev) => [...prev, { name: "", qty: 1, unit: "", amount: null }])}
             className="self-start text-sm font-medium text-leaf underline"
           >
             + Add item
@@ -404,7 +434,7 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
 
         {missingPrice && (
           <p className="mt-3 text-xs text-saffron">
-            Some items have no rate. Fill them in so the total is right.
+            Some items have no amount. Fill them in so the total is right.
           </p>
         )}
         {totalMismatch && (
@@ -520,9 +550,33 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
             : "Type below, or dictate with Wispr Flow."}
       </p>
 
+      <button
+        type="button"
+        onClick={() => {
+          boxRef.current?.focus();
+          setFlowHint(true);
+        }}
+        className="rounded-full border border-line px-5 py-2 text-sm font-medium hover:border-saffron"
+      >
+        Dictate with Wispr Flow
+      </button>
+      {flowHint && (
+        <p className="text-xs text-leaf">
+          The box below is ready. Start Flow with your shortcut and speak. Your words appear here, then press
+          Ctrl or Cmd + Enter to make the entry.
+        </p>
+      )}
+
       <textarea
+        ref={boxRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim() && stage === "input") {
+            e.preventDefault();
+            void makeBill();
+          }
+        }}
         rows={3}
         placeholder={`Try: ${EXAMPLES[trade] ?? EXAMPLES.shopkeeper}`}
         className="w-full resize-none rounded-2xl border border-line bg-background px-4 py-3 text-base outline-none focus:border-saffron"

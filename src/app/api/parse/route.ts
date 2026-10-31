@@ -12,6 +12,8 @@ Rules for price:
 - price is the rate PER UNIT in rupees. Speakers usually state the amount for the whole line: "2 kilo chawal 180" means 180 rupees for the 2 kilo, so price = 90 (divide by qty). Only treat a number as a per-unit rate when the speaker clearly says so ("per kilo", "kilo 90", "each", "rate").
 - If no price is spoken for an item, price is null. Never invent or guess a price.
 - Fees and charges ("fees 300", "visit charge 500", "stitching 800") become their own item with qty 1.
+- Speech-to-text sometimes writes a rupee amount like a clock time: "1:50" is 150 and "3:30" is 330. Convert it to the plain number and then use it exactly like any other amount, for the item or the total it follows. The amounts spoken for items must still be given as that item's price.
+- If the speaker corrects themselves ("2 kilo tel, sorry, 2 kilo dal"), keep only the corrected item.
 - Convert number words in any language to digits (do=2, teen=3, paanch=5, sau=100, dedh=1.5, dhai=2.5).
 - Write item names in simple English where obvious (chawal -> Rice, dal -> Dal), otherwise keep the spoken word.`;
 
