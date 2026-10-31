@@ -5,6 +5,7 @@ const SYSTEM_PROMPT = `You read short spoken sentences from Indian small-busines
 Return JSON only, with:
 - customer_name: the customer, patient, parent or client named, or null if none is named. Keep honorifics like "ji" out of the name only if they are clearly separate words; "Sharma ji" stays "Sharma ji".
 - paid: true if the speech says it was paid in cash/UPI/"de diya"/"paid"; false if it says udhaar/baaki/"likh do"/credit; null if not stated.
+- total: the grand total for the whole bill in rupees if the speaker states one ("total 1800", "टोटल 1800", "kul 1800"), otherwise null. Do not add up items yourself.
 - items: every thing sold, done or charged. Each item has name, qty (number, default 1), unit (kg, g, litre, piece, dozen, hour, trip, etc., or null) and price.
 
 Rules for price:
@@ -19,6 +20,7 @@ const RESPONSE_SCHEMA = {
   properties: {
     customer_name: { type: ["string", "null"] },
     paid: { type: ["boolean", "null"] },
+    total: { type: ["number", "null"] },
     items: {
       type: "array",
       items: {
@@ -154,6 +156,7 @@ export async function POST(req: Request) {
   let parsed: {
     customer_name?: string | null;
     paid?: boolean | null;
+    total?: number | null;
     items?: { name?: string; qty?: number; unit?: string | null; price?: number | null }[];
   };
   try {
@@ -177,6 +180,12 @@ export async function POST(req: Request) {
   return json({
     customer_name: parsed.customer_name?.trim() || null,
     paid: typeof parsed.paid === "boolean" ? parsed.paid : null,
+    total:
+      typeof parsed.total === "number" &&
+      Number.isFinite(parsed.total) &&
+      parsed.total >= 0
+        ? parsed.total
+        : null,
     items,
   });
 }

@@ -69,6 +69,8 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
   const [customerName, setCustomerName] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   const [paid, setPaid] = useState(false);
+  const [statedTotal, setStatedTotal] = useState<number | null>(null);
+  const [manualTotal, setManualTotal] = useState<string | null>(null);
   const [kind, setKind] = useState<Kind>(DEFAULT_KIND[trade] ?? "bill");
   const [known, setKnown] = useState<{ id: string; name: string }[]>([]);
 
@@ -144,6 +146,8 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
 
       setCustomerName(body.customer_name ?? "");
       setPaid(body.paid === true);
+      setStatedTotal(typeof body.total === "number" ? body.total : null);
+      setManualTotal(null);
       setKind(DEFAULT_KIND[trade] ?? "bill");
       setItems(
         body.items.map((i: { name: string; qty: number; unit: string | null; price: number | null }) => ({
@@ -160,10 +164,18 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
     }
   }
 
-  const total = items.reduce((sum, i) => sum + i.qty * (i.price ?? 0), 0);
-  const missingPrice = items.some((i) => i.price === null);
+  const itemsSum = items.reduce((sum, i) => sum + i.qty * (i.price ?? 0), 0);
+  const hasOverride = manualTotal !== null || statedTotal !== null;
+  const total =
+    manualTotal !== null ? Number(manualTotal) || 0 : (statedTotal ?? itemsSum);
+  const missingPrice = items.some((i) => i.price === null) && !hasOverride;
 
   const update = useCallback((idx: number, patch: Partial<Item>) => {
+    // Editing a rate or quantity means the total should follow the items again.
+    if ("price" in patch || "qty" in patch) {
+      setStatedTotal(null);
+      setManualTotal(null);
+    }
     setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   }, []);
 
@@ -214,6 +226,8 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
     setText("");
     setItems([]);
     setCustomerName("");
+    setStatedTotal(null);
+    setManualTotal(null);
     setStage("input");
     onSaved();
   }
@@ -336,7 +350,18 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
             <option value="note">Note</option>
             <option value="trip">Trip</option>
           </select>
-          <p className="font-serif text-2xl">{rupees(total)}</p>
+          <label className="flex items-center gap-2 font-serif text-2xl">
+            ₹
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={total}
+              onChange={(e) => setManualTotal(e.target.value)}
+              aria-label="Total in rupees"
+              className="w-28 rounded-lg border border-line bg-white px-3 py-1 text-right text-2xl outline-none focus:border-saffron"
+            />
+          </label>
         </div>
 
         {error && (
