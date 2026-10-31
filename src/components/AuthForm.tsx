@@ -28,7 +28,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
       if (error) {
         setError(error.message);
       } else if (data.session) {
-        router.replace("/dashboard");
+        router.replace("/setup");
         return;
       } else {
         setNotice("Check your email to confirm your account, then log in.");
