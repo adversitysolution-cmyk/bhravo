@@ -84,46 +84,83 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
       .then(({ data }) => setKnown((data ?? []) as { id: string; name: string }[]));
   }, [savedNote]);
 
-  useEffect(() => () => recRef.current?.stop(), []);
+  // The browser ends a session on silence or after about a minute. We keep
+  // listening until the user taps stop, by starting a fresh session each time.
+  const wantListening = useRef(false);
+  const textRef = useRef("");
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
 
-  function toggleMic() {
-    setError(null);
-    if (listening) {
-      recRef.current?.stop();
-      return;
-    }
+  const stopListening = useCallback(() => {
+    wantListening.current = false;
+    recRef.current?.stop();
+    setListening(false);
+  }, []);
+
+  useEffect(() => stopListening, [stopListening]);
+
+  const startSession = useCallback(() => {
     const Rec = getRecognition();
-    if (!Rec) {
-      setError("This browser cannot listen. Type here, or dictate with Wispr Flow.");
-      return;
-    }
+    if (!Rec) return;
     const rec = new Rec();
     rec.lang = SPEECH_LANG[profile.language] ?? "hi-IN";
     rec.interimResults = true;
-    rec.continuous = false;
-    const base = text.trim();
+    rec.continuous = true;
+    const base = textRef.current.trim();
     rec.onresult = (e) => {
       let spoken = "";
       for (let i = 0; i < e.results.length; i++) spoken += e.results[i][0].transcript;
       setText(base ? `${base} ${spoken}` : spoken);
     };
     rec.onerror = (e) => {
+      // Silence and aborted sessions are normal: onend restarts them.
+      if (e.error === "no-speech" || e.error === "aborted") return;
+      wantListening.current = false;
+      setListening(false);
       setError(
-        e.error === "not-allowed"
+        e.error === "not-allowed" || e.error === "service-not-allowed"
           ? "Microphone is blocked. Allow it in your browser, or type instead."
-          : "Could not hear that. Try again, or type.",
+          : "Lost the connection to the microphone. Tap to try again, or type.",
       );
     };
-    rec.onend = () => setListening(false);
+    rec.onend = () => {
+      if (!wantListening.current) {
+        setListening(false);
+        return;
+      }
+      // Give the last words a moment to land in state, then continue.
+      setTimeout(() => {
+        if (wantListening.current) startSession();
+      }, 200);
+    };
     recRef.current = rec;
+    try {
+      rec.start();
+    } catch {
+      // start() throws if a session is already running; onend will retry.
+    }
+  }, [profile.language]);
+
+  function toggleMic() {
+    setError(null);
+    if (listening) {
+      stopListening();
+      return;
+    }
+    if (!getRecognition()) {
+      setError("This browser cannot listen. Type here, or dictate with Wispr Flow.");
+      return;
+    }
+    wantListening.current = true;
     setListening(true);
-    rec.start();
+    startSession();
   }
 
   async function makeBill() {
     setError(null);
     setSavedNote(null);
-    if (listening) recRef.current?.stop();
+    stopListening();
     setStage("parsing");
 
     const { data: s } = await supabase.auth.getSession();
@@ -406,7 +443,7 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
       </button>
       <p className="text-sm text-muted">
         {listening
-          ? "Listening... tap to stop"
+          ? "Listening... take your time, pause as long as you need. Tap the square to stop."
           : canListen
             ? "Tap and speak, or type below. Wispr Flow dictation works here too."
             : "Type below, or dictate with Wispr Flow."}
