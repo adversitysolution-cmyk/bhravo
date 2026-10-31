@@ -1,72 +1,116 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useProfile } from "@/components/ProfileProvider";
+import { isToday, rupees, shortDate } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
+import type { EntryRow } from "@/lib/types";
 
-export default function DashboardPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState<string | null>(null);
+export default function DashboardHome() {
+  const { profile } = useProfile();
+  const [entries, setEntries] = useState<EntryRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) {
-        router.replace("/login");
+    (async () => {
+      const { data, error } = await supabase
+        .from("entries")
+        .select("id,kind,total,paid,created_at,customer_id,customers(name)")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) {
+        setError(error.message);
         return;
       }
-      setEmail(data.session.user.email ?? null);
-    });
+      setEntries((data ?? []) as unknown as EntryRow[]);
+    })();
+  }, []);
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) router.replace("/login");
-    });
-    return () => sub.subscription.unsubscribe();
-  }, [router]);
-
-  async function signOut() {
-    await supabase.auth.signOut();
-    router.replace("/login");
-  }
-
-  if (!email) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-muted">
-        Loading...
-      </div>
-    );
-  }
+  const today = (entries ?? []).filter((e) => isToday(e.created_at));
+  const todayTotal = today.reduce((sum, e) => sum + Number(e.total), 0);
+  const dues = (entries ?? [])
+    .filter((e) => !e.paid)
+    .reduce((sum, e) => sum + Number(e.total), 0);
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-8">
-      <header className="flex items-center justify-between">
-        <span className="font-serif text-2xl font-semibold text-leaf">
-          Bhravo
-        </span>
-        <div className="flex items-center gap-4 text-sm">
-          <span className="hidden text-muted sm:inline">{email}</span>
-          <button
-            onClick={signOut}
-            className="rounded-full border border-line bg-white px-4 py-2 font-medium hover:border-saffron"
-          >
-            Log out
-          </button>
-        </div>
-      </header>
-
-      <main className="flex flex-1 flex-col items-center justify-center gap-6 text-center">
+    <div className="flex flex-col gap-8">
+      <section className="flex flex-col items-center gap-3 rounded-3xl border border-line bg-white px-6 py-10 text-center">
         <button
           disabled
           aria-label="Speak (coming soon)"
-          className="flex h-28 w-28 items-center justify-center rounded-full bg-saffron text-5xl text-white shadow-lg opacity-80"
+          className="flex h-24 w-24 items-center justify-center rounded-full bg-saffron text-4xl text-white opacity-80 shadow-lg"
         >
           🎤
         </button>
-        <h1 className="font-serif text-3xl">Your dashboard is ready</h1>
-        <p className="max-w-sm text-muted">
-          Voice billing, khata and reminders are coming next. You are logged in
-          and your data stays private to you.
+        <h1 className="font-serif text-2xl">
+          {profile.business_name
+            ? `Namaste, ${profile.business_name}`
+            : "Namaste"}
+        </h1>
+        <p className="max-w-sm text-sm text-muted">
+          Voice entry arrives in the next update. For now, set up your
+          customers and settings.
         </p>
-      </main>
+      </section>
+
+      <section className="grid grid-cols-3 gap-3">
+        <Stat label="Today" value={rupees(todayTotal)} />
+        <Stat label="Dues pending" value={rupees(dues)} />
+        <Stat label="Entries today" value={String(today.length)} />
+      </section>
+
+      <section>
+        <h2 className="font-serif text-xl">Recent entries</h2>
+        {error && (
+          <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </p>
+        )}
+        {!error && entries === null && (
+          <p className="mt-3 text-muted">Loading...</p>
+        )}
+        {entries && entries.length === 0 && (
+          <p className="mt-3 rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
+            No entries yet. Your first spoken bill will show up here.
+          </p>
+        )}
+        {entries && entries.length > 0 && (
+          <ul className="mt-3 divide-y divide-line rounded-2xl border border-line bg-white">
+            {entries.slice(0, 10).map((e) => (
+              <li
+                key={e.id}
+                className="flex items-center justify-between gap-4 px-4 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium">
+                    {e.customers?.name ?? "Walk-in"}
+                  </p>
+                  <p className="text-xs capitalize text-muted">
+                    {e.kind} · {shortDate(e.created_at)}
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="font-medium">{rupees(Number(e.total))}</p>
+                  <p
+                    className={`text-xs ${e.paid ? "text-leaf" : "text-saffron"}`}
+                  >
+                    {e.paid ? "Paid" : "Udhaar"}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-line bg-white p-4">
+      <p className="text-xs uppercase tracking-wider text-muted">{label}</p>
+      <p className="mt-1 font-serif text-2xl">{value}</p>
     </div>
   );
 }
