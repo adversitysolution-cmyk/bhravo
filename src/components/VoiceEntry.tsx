@@ -206,6 +206,13 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
   const total =
     manualTotal !== null ? Number(manualTotal) || 0 : (statedTotal ?? itemsSum);
   const missingPrice = items.some((i) => i.price === null) && !hasOverride;
+  // The speaker said a total that disagrees with the items they priced.
+  const totalMismatch =
+    statedTotal !== null &&
+    manualTotal === null &&
+    items.length > 0 &&
+    items.every((i) => i.price !== null) &&
+    Math.abs(itemsSum - statedTotal) > 0.5;
 
   const update = useCallback((idx: number, patch: Partial<Item>) => {
     // Editing a rate or quantity means the total should follow the items again.
@@ -353,6 +360,18 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
         {missingPrice && (
           <p className="mt-3 text-xs text-saffron">
             Some items have no rate. Fill them in so the total is right.
+          </p>
+        )}
+        {totalMismatch && (
+          <p className="mt-3 rounded-lg bg-saffron-soft px-3 py-2 text-xs">
+            The items add up to {rupees(itemsSum)}, but you said {rupees(statedTotal ?? 0)}.{" "}
+            <button
+              type="button"
+              onClick={() => setStatedTotal(null)}
+              className="font-medium text-leaf underline"
+            >
+              Use {rupees(itemsSum)}
+            </button>
           </p>
         )}
 

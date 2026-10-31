@@ -9,7 +9,7 @@ Return JSON only, with:
 - items: every thing sold, done or charged. Each item has name, qty (number, default 1), unit (kg, g, litre, piece, dozen, hour, trip, etc., or null) and price.
 
 Rules for price:
-- price is the rate PER UNIT in rupees. If the speaker gives a total for the line (for example "chawal 200 rupaye" for 2 kilo), divide by qty.
+- price is the rate PER UNIT in rupees. Speakers usually state the amount for the whole line: "2 kilo chawal 180" means 180 rupees for the 2 kilo, so price = 90 (divide by qty). Only treat a number as a per-unit rate when the speaker clearly says so ("per kilo", "kilo 90", "each", "rate").
 - If no price is spoken for an item, price is null. Never invent or guess a price.
 - Fees and charges ("fees 300", "visit charge 500", "stitching 800") become their own item with qty 1.
 - Convert number words in any language to digits (do=2, teen=3, paanch=5, sau=100, dedh=1.5, dhai=2.5).
