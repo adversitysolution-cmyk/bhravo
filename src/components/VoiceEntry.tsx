@@ -80,6 +80,16 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
   const boxRef = useRef<HTMLTextAreaElement | null>(null);
   const [flowHint, setFlowHint] = useState(false);
 
+  // Catch text that a dictation tool put in the box without an input event.
+  useEffect(() => {
+    if (stage !== "input") return;
+    const id = window.setInterval(() => {
+      const v = boxRef.current?.value;
+      if (v !== undefined && v !== textRef.current) setText(v);
+    }, 400);
+    return () => window.clearInterval(id);
+  }, [stage]);
+
   const recRef = useRef<Recognition | null>(null);
   const canListen = getRecognition() !== null;
 
@@ -201,7 +211,11 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
     startSession();
   }
 
-  async function makeBill() {
+  // `value` is read straight from the box, because dictation tools such as
+  // Wispr Flow can change it without React seeing an input event.
+  async function makeBill(value: string = text) {
+    if (!value.trim()) return;
+    setText(value);
     setError(null);
     setSavedNote(null);
     setLastSaved(null);
@@ -220,7 +234,7 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
       const res = await fetch("/api/parse", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ text, trade }),
+        body: JSON.stringify({ text: value, trade }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Something went wrong.");
@@ -571,10 +585,11 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
         ref={boxRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
+        onInput={(e) => setText(e.currentTarget.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim() && stage === "input") {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && stage === "input") {
             e.preventDefault();
-            void makeBill();
+            void makeBill(e.currentTarget.value);
           }
         }}
         rows={3}
@@ -623,7 +638,7 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
 
       <button
         type="button"
-        onClick={makeBill}
+        onClick={() => void makeBill(boxRef.current?.value ?? text)}
         disabled={!text.trim() || stage === "parsing"}
         className="rounded-full bg-leaf px-8 py-3 font-medium text-white hover:opacity-90 disabled:opacity-50"
       >
