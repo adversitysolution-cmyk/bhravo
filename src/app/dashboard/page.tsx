@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useProfile } from "@/components/ProfileProvider";
 import VoiceEntry from "@/components/VoiceEntry";
 import { isToday, rupees, shortDate } from "@/lib/format";
+import { billMessage, payLink, waLink } from "@/lib/share";
 import { supabase } from "@/lib/supabase";
 import type { EntryRow } from "@/lib/types";
 
@@ -15,7 +16,7 @@ export default function DashboardHome() {
   const load = useCallback(async () => {
     const { data, error } = await supabase
       .from("entries")
-      .select("id,kind,total,paid,created_at,customer_id,customers(name)")
+      .select("id,kind,total,paid,created_at,customer_id,items,customers(name,phone)")
       .order("created_at", { ascending: false })
       .limit(200);
     if (error) {
@@ -28,6 +29,24 @@ export default function DashboardHome() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  function shareEntry(e: EntryRow) {
+    const total = Number(e.total);
+    const payUrl =
+      profile.upi_id && !e.paid && total > 0
+        ? payLink(window.location.origin, profile.upi_id, profile.business_name ?? "", total)
+        : null;
+    const message = billMessage({
+      business: profile.business_name || "Bhravo",
+      customer: e.customers?.name ?? null,
+      kind: e.kind,
+      items: e.items ?? [],
+      total,
+      paid: e.paid,
+      payUrl,
+    });
+    window.open(waLink(e.customers?.phone, message), "_blank", "noopener");
+  }
 
   const today = (entries ?? []).filter((e) => isToday(e.created_at));
   const todayTotal = today.reduce((sum, e) => sum + Number(e.total), 0);
@@ -79,13 +98,23 @@ export default function DashboardHome() {
                     {e.kind} · {shortDate(e.created_at)}
                   </p>
                 </div>
-                <div className="shrink-0 text-right">
-                  <p className="font-medium">{rupees(Number(e.total))}</p>
-                  <p
-                    className={`text-xs ${e.paid ? "text-leaf" : "text-saffron"}`}
+                <div className="flex shrink-0 items-center gap-3">
+                  <div className="text-right">
+                    <p className="font-medium">{rupees(Number(e.total))}</p>
+                    <p
+                      className={`text-xs ${e.paid ? "text-leaf" : "text-saffron"}`}
+                    >
+                      {e.paid ? "Paid" : "Udhaar"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => shareEntry(e)}
+                    aria-label="Send on WhatsApp"
+                    className="rounded-full border border-line px-3 py-1.5 text-xs font-medium hover:border-saffron"
                   >
-                    {e.paid ? "Paid" : "Udhaar"}
-                  </p>
+                    Send
+                  </button>
                 </div>
               </li>
             ))}

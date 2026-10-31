@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useProfile } from "@/components/ProfileProvider";
 import { rupees } from "@/lib/format";
+import { billMessage, payLink, spokenSummary, waLink } from "@/lib/share";
+import { SPEECH_LANG, speak } from "@/lib/speech";
 import { supabase } from "@/lib/supabase";
 
 type Item = { name: string; qty: number; unit: string; price: number | null };
@@ -15,16 +17,6 @@ const DEFAULT_KIND: Record<string, Kind> = {
   teacher: "receipt",
   driver: "trip",
   painter: "quote",
-};
-
-const SPEECH_LANG: Record<string, string> = {
-  hinglish: "hi-IN",
-  hindi: "hi-IN",
-  english: "en-IN",
-  kannada: "kn-IN",
-  tamil: "ta-IN",
-  telugu: "te-IN",
-  marathi: "mr-IN",
 };
 
 const EXAMPLES: Record<string, string> = {
@@ -72,7 +64,17 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
   const [statedTotal, setStatedTotal] = useState<number | null>(null);
   const [manualTotal, setManualTotal] = useState<string | null>(null);
   const [kind, setKind] = useState<Kind>(DEFAULT_KIND[trade] ?? "bill");
-  const [known, setKnown] = useState<{ id: string; name: string }[]>([]);
+  const [known, setKnown] = useState<
+    { id: string; name: string; phone: string | null }[]
+  >([]);
+  const [lastSaved, setLastSaved] = useState<{
+    customer: string | null;
+    phone: string | null;
+    kind: Kind;
+    items: { name: string; qty: number; unit: string; price: number }[];
+    total: number;
+    paid: boolean;
+  } | null>(null);
 
   const recRef = useRef<Recognition | null>(null);
   const canListen = getRecognition() !== null;
@@ -80,9 +82,41 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
   useEffect(() => {
     supabase
       .from("customers")
-      .select("id,name")
-      .then(({ data }) => setKnown((data ?? []) as { id: string; name: string }[]));
+      .select("id,name,phone")
+      .then(({ data }) =>
+        setKnown((data ?? []) as { id: string; name: string; phone: string | null }[]),
+      );
   }, [savedNote]);
+
+  function shareOnWhatsApp(s: NonNullable<typeof lastSaved>) {
+    const payUrl =
+      profile.upi_id && !s.paid && s.total > 0
+        ? payLink(window.location.origin, profile.upi_id, profile.business_name ?? "", s.total)
+        : null;
+    const message = billMessage({
+      business: profile.business_name || "Bhravo",
+      customer: s.customer,
+      kind: s.kind,
+      items: s.items,
+      total: s.total,
+      paid: s.paid,
+      payUrl,
+    });
+    window.open(waLink(s.phone, message), "_blank", "noopener");
+  }
+
+  function readAloud(customer: string | null, list: Item[], sum: number, isPaid: boolean) {
+    const ok = speak(
+      spokenSummary({
+        customer,
+        items: list.map((i) => ({ ...i, price: i.price ?? 0 })),
+        total: sum,
+        paid: isPaid,
+      }),
+      profile.language,
+    );
+    if (!ok) setError("This browser cannot read aloud.");
+  }
 
   // The browser ends a session on silence or after about a minute. We keep
   // listening until the user taps stop, by starting a fresh session each time.
@@ -160,6 +194,7 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
   async function makeBill() {
     setError(null);
     setSavedNote(null);
+    setLastSaved(null);
     stopListening();
     setStage("parsing");
 
@@ -232,11 +267,13 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
     setStage("saving");
 
     let customerId: string | null = null;
+    let customerPhone: string | null = null;
     const name = customerName.trim();
     if (name) {
       const match = known.find((c) => c.name.toLowerCase() === name.toLowerCase());
       if (match) {
         customerId = match.id;
+        customerPhone = match.phone;
       } else {
         const { data, error } = await supabase
           .from("customers")
@@ -266,6 +303,14 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
       return;
     }
 
+    setLastSaved({
+      customer: name || null,
+      phone: customerPhone,
+      kind,
+      items: items.map((i) => ({ ...i, price: i.price ?? 0 })),
+      total,
+      paid,
+    });
     setSavedNote(`Saved: ${rupees(total)}${name ? ` for ${name}` : ""}.`);
     setText("");
     setItems([]);
@@ -443,6 +488,13 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
           >
             Back
           </button>
+          <button
+            type="button"
+            onClick={() => readAloud(customerName.trim() || null, items, total, paid)}
+            className="rounded-full border border-line px-6 py-3 font-medium hover:border-saffron"
+          >
+            🔊 Read aloud
+          </button>
         </div>
       </section>
     );
@@ -483,6 +535,36 @@ export default function VoiceEntry({ onSaved }: { onSaved: () => void }) {
       )}
       {savedNote && (
         <p className="w-full rounded-lg bg-leaf-soft px-3 py-2 text-sm text-leaf">{savedNote}</p>
+      )}
+      {lastSaved && (
+        <div className="flex w-full flex-wrap justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => shareOnWhatsApp(lastSaved)}
+            className="rounded-full bg-[#25D366] px-6 py-3 font-medium text-white hover:opacity-90"
+          >
+            Send on WhatsApp
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              readAloud(
+                lastSaved.customer,
+                lastSaved.items,
+                lastSaved.total,
+                lastSaved.paid,
+              )
+            }
+            className="rounded-full border border-line px-6 py-3 font-medium hover:border-saffron"
+          >
+            🔊 Read aloud
+          </button>
+          {!lastSaved.phone && lastSaved.customer && (
+            <p className="w-full text-xs text-muted">
+              No number saved for {lastSaved.customer}. WhatsApp will ask you to pick a contact. Add the number in Customers to skip that.
+            </p>
+          )}
+        </div>
       )}
 
       <button
