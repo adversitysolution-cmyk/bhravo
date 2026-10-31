@@ -3,6 +3,8 @@ export type BillItem = {
   qty: number;
   unit?: string | null;
   price: number | null;
+  /** What the whole line costs. Older entries only have price. */
+  amount?: number | null;
 };
 
 const KIND_LABEL: Record<string, string> = {
@@ -55,7 +57,8 @@ export function billMessage(args: {
 }): string {
   const lines = args.items.map((i) => {
     const qty = `${i.qty}${i.unit ? ` ${i.unit}` : ""}`;
-    const amount = i.price ? ` = ${money(i.qty * i.price)}` : "";
+    const line = i.amount ?? (i.price ? i.qty * i.price : 0);
+    const amount = line ? ` = ${money(line)}` : "";
     return `• ${i.name} ${qty}${amount}`;
   });
   const parts = [

@@ -22,6 +22,12 @@ export type EntryRow = {
   paid: boolean;
   created_at: string;
   customer_id: string | null;
-  items: { name: string; qty: number; unit?: string | null; price: number | null }[];
+  items: {
+    name: string;
+    qty: number;
+    unit?: string | null;
+    price: number | null;
+    amount?: number | null;
+  }[];
   customers: { name: string; phone: string | null } | null;
 };
