@@ -15,19 +15,19 @@ Rules for price:
 - Write item names in simple English where obvious (chawal -> Rice, dal -> Dal), otherwise keep the spoken word.`;
 
 const RESPONSE_SCHEMA = {
-  type: "OBJECT",
+  type: "object",
   properties: {
-    customer_name: { type: "STRING", nullable: true },
-    paid: { type: "BOOLEAN", nullable: true },
+    customer_name: { type: ["string", "null"] },
+    paid: { type: ["boolean", "null"] },
     items: {
-      type: "ARRAY",
+      type: "array",
       items: {
-        type: "OBJECT",
+        type: "object",
         properties: {
-          name: { type: "STRING" },
-          qty: { type: "NUMBER" },
-          unit: { type: "STRING", nullable: true },
-          price: { type: "NUMBER", nullable: true },
+          name: { type: "string" },
+          qty: { type: "number" },
+          unit: { type: ["string", "null"] },
+          price: { type: ["number", "null"] },
         },
         required: ["name", "qty"],
       },
@@ -35,6 +35,60 @@ const RESPONSE_SCHEMA = {
   },
   required: ["items"],
 };
+
+// Tried in order; Google retires model names often, so keep a fallback.
+const FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+
+type InteractionStep = {
+  type?: string;
+  content?: { type?: string; text?: string }[];
+};
+
+async function askGemini(
+  apiKey: string,
+  models: string[],
+  input: string,
+): Promise<{ text: string } | { status: number }> {
+  let lastStatus = 502;
+  for (const model of models) {
+    const res = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/interactions",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          model,
+          store: false,
+          system_instruction: SYSTEM_PROMPT,
+          input,
+          generation_config: { temperature: 0 },
+          response_format: {
+            type: "text",
+            mime_type: "application/json",
+            schema: RESPONSE_SCHEMA,
+          },
+        }),
+      },
+    );
+    if (res.ok) {
+      const data = (await res.json()) as { steps?: InteractionStep[] };
+      const text = (data.steps ?? [])
+        .filter((s) => s.type === "model_output")
+        .flatMap((s) => s.content ?? [])
+        .filter((c) => c.type === "text" && typeof c.text === "string")
+        .map((c) => c.text)
+        .join("");
+      if (text) return { text };
+    }
+    lastStatus = res.status;
+    // Try the next model on "gone" or "busy"; stop on real client errors.
+    if (![404, 429, 500, 502, 503, 504].includes(res.status) && !res.ok) break;
+  }
+  return { status: lastStatus };
+}
 
 function json(body: unknown, status = 200) {
   return Response.json(body, { status });
@@ -44,7 +98,7 @@ export async function POST(req: Request) {
   const supaUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supaAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const geminiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const model = process.env.GEMINI_MODEL?.trim();
 
   if (!supaUrl || !supaAnon) {
     return json({ error: "Server is missing Supabase settings." }, 500);
@@ -79,41 +133,23 @@ export async function POST(req: Request) {
   if (text.length > 1500) return json({ error: "That is too long." }, 400);
   const trade = typeof body.trade === "string" ? body.trade : "shopkeeper";
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-goog-api-key": geminiKey,
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: `Business type: ${trade}\nSpeech: ${text}` }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0,
-          responseMimeType: "application/json",
-          responseSchema: RESPONSE_SCHEMA,
-        },
-      }),
-    },
+  const answer = await askGemini(
+    geminiKey,
+    [...(model ? [model] : []), ...FALLBACK_MODELS],
+    `Business type: ${trade}\nSpeech: ${text}`,
   );
 
-  if (!res.ok) {
-    const detail = res.status === 429 ? "Too many requests. Try again in a minute." : "The AI could not read that. Try again.";
+  if ("status" in answer) {
+    console.error("Gemini request failed with status", answer.status);
+    const detail =
+      answer.status === 429
+        ? "Too many requests. Try again in a minute."
+        : answer.status === 401 || answer.status === 403
+          ? "The AI key was rejected. Check GEMINI_API_KEY."
+          : "The AI could not read that. Try again.";
     return json({ error: detail }, 502);
   }
-
-  const data = await res.json();
-  const raw: unknown = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (typeof raw !== "string") {
-    return json({ error: "The AI returned nothing. Try again." }, 502);
-  }
+  const raw = answer.text;
 
   let parsed: {
     customer_name?: string | null;
