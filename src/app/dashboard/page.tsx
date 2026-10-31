@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useProfile } from "@/components/ProfileProvider";
+import VoiceEntry from "@/components/VoiceEntry";
 import { isToday, rupees, shortDate } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import type { EntryRow } from "@/lib/types";
@@ -11,20 +12,22 @@ export default function DashboardHome() {
   const [entries, setEntries] = useState<EntryRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase
-        .from("entries")
-        .select("id,kind,total,paid,created_at,customer_id,customers(name)")
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (error) {
-        setError(error.message);
-        return;
-      }
-      setEntries((data ?? []) as unknown as EntryRow[]);
-    })();
+  const load = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("entries")
+      .select("id,kind,total,paid,created_at,customer_id,customers(name)")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    setEntries((data ?? []) as unknown as EntryRow[]);
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const today = (entries ?? []).filter((e) => isToday(e.created_at));
   const todayTotal = today.reduce((sum, e) => sum + Number(e.total), 0);
@@ -34,24 +37,11 @@ export default function DashboardHome() {
 
   return (
     <div className="flex flex-col gap-8">
-      <section className="flex flex-col items-center gap-3 rounded-3xl border border-line bg-white px-6 py-10 text-center">
-        <button
-          disabled
-          aria-label="Speak (coming soon)"
-          className="flex h-24 w-24 items-center justify-center rounded-full bg-saffron text-4xl text-white opacity-80 shadow-lg"
-        >
-          🎤
-        </button>
-        <h1 className="font-serif text-2xl">
-          {profile.business_name
-            ? `Namaste, ${profile.business_name}`
-            : "Namaste"}
-        </h1>
-        <p className="max-w-sm text-sm text-muted">
-          Voice entry arrives in the next update. For now, set up your
-          customers and settings.
-        </p>
-      </section>
+      <h1 className="font-serif text-3xl">
+        {profile.business_name ? `Namaste, ${profile.business_name}` : "Namaste"}
+      </h1>
+
+      <VoiceEntry onSaved={load} />
 
       <section className="grid grid-cols-3 gap-3">
         <Stat label="Today" value={rupees(todayTotal)} />
